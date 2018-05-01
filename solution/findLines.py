@@ -86,7 +86,7 @@ def dir_threshold(gray, sobel_kernel=3, thresh=(0, np.pi/2)):
 	return sxbinary
 
 
-def deNoise(binary_img)
+def deNoise(binary_img):
 	w = binary_img.shape[1]
 	h = binary_img.shape[0]
 	retImg  = np.zeros_like(binary_img)
@@ -107,11 +107,11 @@ def deNoise(binary_img)
 			w = rotated_rect.size[1]
 			h = rotated_rect.size[2]
 			theta = rotated_rect.angle
-		
+            	
 			if(w > h):
 				theta  = 90 + theta
 			if h >longLine or w > longLine:
-				cv2.fi	
+				cv2.fillpoly(retImg,ct,cv::Scalar(1));	
 				
 '''
                     drawContours(frame, contours,i, cvScalar(0), CV_FILLED, 8);
