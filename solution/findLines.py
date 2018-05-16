@@ -2,6 +2,8 @@ import numpy as np
 import cv2
 import glob
 from calibration import calibrate
+margin = 100
+minpix = 50
 def getBinaryImageframe(img):
 	assert len(img.shape) == 3
 	w = img.shape[1]
@@ -16,6 +18,7 @@ def getBinaryImageframe(img):
 	sx_binary = abs_sobel_thresh(gray,'x',20,100)	
 	combined_binary = np.zeros_like(sx_binary)
 	combined_binary[(sc_binary == 1) | (sx_binary == 1)] = 1
+	#cv2.imwrite('bin.png',combined_binary*255)
 	return combined_binary
 
 
@@ -86,97 +89,185 @@ def dir_threshold(gray, sobel_kernel=3, thresh=(0, np.pi/2)):
 	return sxbinary
 
 
-def deNoise(binary_img):
-	w = binary_img.shape[1]
-	h = binary_img.shape[0]
-	retImg  = np.zeros_like(binary_img)
-	longLine = 0.2*h
-	minRegionSize = 0.002 * w * h
-	smallLaneArea = 5 * minRegionSize
-	ratio = 4
 
-	leftLine = 2 * frame.cols // 5
-	rightLine = 3 * frame.cols // 5
-	# find countours in binary image	
-	#cv2.findContours(image, mode, method[, contours[, hierarchy[, offset]]]) ¡ú contours, hierarchy
-	contours, hierarchy = cv2.findContours(binary_img, CV_RETR_CCOMP,CV_CHAIN_APPROX_SIMPLE)
-	for ct in countours:
-		ct_area = cv2.contourArea(ct)
-		if ct_area > minRegionSize:
-			rotated_rect = cv2.minAreaRect(ct)
-			w = rotated_rect.size[1]
-			h = rotated_rect.size[2]
-			theta = rotated_rect.angle
-            	
-			if(w > h):
-				theta  = 90 + theta
-			if h >longLine or w > longLine:
-				cv2.fillpoly(retImg,ct,cv::Scalar(1));	
-				
-'''
-                    drawContours(frame, contours,i, cvScalar(0), CV_FILLED, 8);
-                    cv::Vec4f line;
-                    cv::fitLine(contours[i], line, CV_DIST_L2, 0, 0.01, 0.01);
-                    
-                    float vx,vy,x,y;
-                    vx = line[0];
-                    vy = line[1];
-                    x =line[2];
-                    y=line[3];
-                    int lefty,righty;
-                    
-                    lefty = int((-x*vy/vx) + y);
-                    righty = int(((frame.cols-x)*vy/vx)+y);
-                    cv::line(frame,cv::Point(frame.cols-1,righty),cv::Point(0,lefty),cv::Scalar(192,128,0));
-                    
-                    
-               
-                    drawContours(temp, contours,i, cvScalar(255), CV_FILLED, 8);
-                }
+def compute_perspective_transform(w,h):
+	transform_src = np.float32([ [600,465], [340,650], [1160,650], [750,465]])
+	transform_dst = np.float32([ [340,360], [340,700], [1160,700], [1160,360]])
+	M = cv2.getPerspectiveTransform(transform_src, transform_dst)
+	invM = cv2.getPerspectiveTransform(transform_dst, transform_src)
+	return [M,invM]
 
-                
-                else if((blob_angle_deg <-10 || blob_angle_deg >10 ) && ((blob_angle_deg > -70 && blob_angle_deg < 70 ) || (rotated_rect.center.y > topLine && (rotated_rect.center.x > leftLine ||rotated_rect.center.x <rightLine))))
-                {
-                    
-                    if ((contour_length/contour_width)>=ratio || (contour_width/contour_length)>=ratio ||(contour_area< smallLaneArea &&  ((contour_area/(contour_width*contour_length)) > .75) && ((contour_length/contour_width)>=3 || (contour_width/contour_length)>=3)))
-                    {
-                        drawContours(frame, contours,i, cvScalar(0), CV_FILLED, 8);
-                        cv::Vec4f line;
-                        cv::fitLine(contours[i], line, CV_DIST_L2, 0, 0.01, 0.01);
-                        
-                        float vx,vy,x,y;
-                        vx = line[0];
-                        vy = line[1];
-                        x =line[2];
-                        y=line[3];
-                        int lefty,righty;
-                        
-                        lefty = int((-x*vy/vx) + y);
-                        righty = int(((frame.cols-x)*vy/vx)+y);
-                        cv::line(frame,cv::Point(frame.cols-1,righty),cv::Point(0,lefty),cv::Scalar(192,128,0));
 
-                        drawContours(temp, contours,i, cvScalar(255), CV_FILLED, 8);
-                    }
-                }
-            }
-        }
-    }
+def apply_perspective_transform(binary_image, M):
+	warped_image = cv2.warpPerspective(binary_image, M, (binary_image.shape[1], binary_image.shape[0]), flags=cv2.INTER_NEAREST)  
+	return warped_image
+
+def identifyLines(binary_warped):
+	global margin,minpix
+	histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
+
+	# Create an output image to draw on and  visualize the result
+	out_img = np.dstack((binary_warped, binary_warped, binary_warped))*255
+	# Find the peak of the left and right halves of the histogram
+	# These will be the starting point for the left and right lines
+	midpoint = np.int(histogram.shape[0]//2)
+	leftx_base = np.argmax(histogram[:midpoint])
+	rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+	
+	# Choose the number of sliding windows
+	nwindows = 9
+	# Set height of windows
+	window_height = np.int(binary_warped.shape[0]//nwindows)
+	# Identify the x and y positions of all nonzero pixels in the image
+	nonzero = binary_warped.nonzero()
+	nonzeroy = np.array(nonzero[0])
+	nonzerox = np.array(nonzero[1])
+
+	# Current positions to be updated for each window
+	leftx_current = leftx_base
+	rightx_current = rightx_base
+	# Set the width of the windows +/- margin
+	# Set minimum number of pixels found to recenter window
+	# Create empty lists to receive left and right lane pixel indices
+	left_lane_inds = []
+	right_lane_inds = []
+	# Step through the windows one by one
+	for window in range(nwindows):
+		# Identify window boundaries in x and y (and right and left)
+		win_y_low = binary_warped.shape[0] - (window+1)*window_height
+		win_y_high = binary_warped.shape[0] - window*window_height
+		win_xleft_low = leftx_current - margin
+		win_xleft_high = leftx_current + margin
+		win_xright_low = rightx_current - margin
+		win_xright_high = rightx_current + margin
+		# Draw the windows on the visualization image
+		cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),
+		(0,255,0), 2) 
+		cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),
+		(0,255,0), 2) 
+		# Identify the nonzero pixels in x and y within the window
+		good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & 
+		(nonzerox >= win_xleft_low) &  (nonzerox < win_xleft_high)).nonzero()[0]
+		good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & 
+		(nonzerox >= win_xright_low) &  (nonzerox < win_xright_high)).nonzero()[0]
+		# Append these indices to the lists
+		left_lane_inds.append(good_left_inds)
+		right_lane_inds.append(good_right_inds)
+		# If you found > minpix pixels, recenter next window on their mean position
+		if len(good_left_inds) > minpix:
+			leftx_current = np.int(np.mean(nonzerox[good_left_inds]))
+		if len(good_right_inds) > minpix:        
+			rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
+
+	# Concatenate the arrays of indices
+	left_lane_inds = np.concatenate(left_lane_inds)
+	right_lane_inds = np.concatenate(right_lane_inds)
+	
+	# Extract left and right line pixel positions
+	leftx = nonzerox[left_lane_inds]
+	lefty = nonzeroy[left_lane_inds] 
+	rightx = nonzerox[right_lane_inds]
+	righty = nonzeroy[right_lane_inds] 
+	
+	# Fit a second order polynomial to each
+	left_fit = np.polyfit(lefty, leftx, 2)
+	right_fit = np.polyfit(righty, rightx, 2)
+	ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
+	left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+	right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+	return[ left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty]
+
+
+
+
+def draw_lane( undist, warped, invM, left_fitx, right_fitx, ploty):
+
+    warp_zero = np.zeros_like(warped).astype(np.uint8)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
     
-   // binaryImage.release();
+    # Recast the x and y points into usable format for cv2.fillPoly()
+    pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+    pts = np.hstack((pts_left, pts_right))
     
-    return temp;
+    # Draw the lane onto the warped blank image
+    cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
+    
+    # Warp the blank back to original image space using inverse perspective matrix (invM)
+    newwarp = cv2.warpPerspective(color_warp, invM, (warped.shape[1], warped.shape[0])) 
+    # Combine the result with the original image
+    result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+    return result
 
-};
+def compute_curvature( left_fit, right_fit, ploty, left_fitx, right_fitx, leftx, lefty, rightx, righty):
+        
+    ym_per_pix = 30/720 # meters per pixel in y dimension
+    xm_per_pix = 4/700 # meters per pixel in x dimension
+    
+    y_eval = np.max(ploty)
+
+    fit_cr_left = np.polyfit(ploty * ym_per_pix, left_fitx * xm_per_pix, 2)
+    curve_l= ((1 + (2 * left_fit[0] * y_eval / 2. + fit_cr_left[1]) ** 2) ** 1.5) / np.absolute(2 * fit_cr_left[0])
+    fit_cr_right = np.polyfit(ploty * ym_per_pix, right_fitx * xm_per_pix, 2)
+    curve_r= ((1 + (2 * right_fit[0] * y_eval / 2. + fit_cr_right[1]) ** 2) ** 1.5) / np.absolute(2 * fit_cr_right[0])
+
+    return (curve_l+ curve_r) / 2
+def compute_center_offset(curve, undist_image):
+        
+    xm_per_pix = 4/700
+    lane_center_x = int(curve)
+    image_center_x = int(undist_image.shape[1] / 2)
+    offset_from_center = (image_center_x - lane_center_x) * xm_per_pix 
+    
+    return offset_from_center
 
 
-'''
+def render_curvature_and_offset(undist_image, curve, offset):
 
+   offset_text = 'offset is: {:.2f}m'.format(offset)
+   font = cv2.FONT_HERSHEY_SIMPLEX
+   cv2.putText(undist_image, offset_text, (30, 50), font, 1, (255, 255, 255), 2)
+
+   curve_text = 'curverature is: {:.2f}m'.format(curve)
+   cv2.putText(undist_image, curve_text, (19, 90), font, 1, (255, 255, 255), 2)
+
+   return undist_image
 
 if __name__=="__main__":
 	mtx,dist,mapx,mapy = calibrate(False)
-	img = cv2.imread("../test_images/test1.jpg")
+	img = cv2.imread("../test_images/straight_lines1.jpg")
 	color = cv2.remap(img,mapx,mapy,cv2.INTER_LINEAR)
 	binary = getBinaryImageframe(color)
-	cv2.imshow("binary",binary*255)
+
+	w = img.shape[1]
+	h = img.shape[0]
+	M,invM = compute_perspective_transform(color.shape[1],color.shape[0])
+	perspective_binary =apply_perspective_transform(binary,M)
+	left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty = identifyLines(perspective_binary)
+	
+	out_img = np.dstack((perspective_binary, perspective_binary, perspective_binary))*255
+	window_img = np.zeros_like(out_img)
+	# Generate a polygon to illustrate the search window area
+	# And recast the x and y points into usable format for cv2.fillPoly()
+	ploty = np.linspace(0, binary.shape[0]-1, binary.shape[0])
+	left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin, ploty]))])
+	left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin, 
+	                              ploty])))])
+
+	left_line_pts = np.hstack((left_line_window1, left_line_window2))
+	right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin, ploty]))])
+	right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin, 
+	                              ploty])))])
+	right_line_pts = np.hstack((right_line_window1, right_line_window2))
+	
+	# Draw the lane onto the warped blank image
+	cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
+	cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
+	result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
+
+	ret2 = draw_lane(color,perspective_binary,invM,left_fitx,right_fitx,ploty)
+
+	cv2.imshow("binary",result)
+	cv2.imshow("final",ret2)
 	cv2.waitKey()
 	cv2.destroyAllWindows()
