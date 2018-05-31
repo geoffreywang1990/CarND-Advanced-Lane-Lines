@@ -8,17 +8,16 @@ def getBinaryImageframe(img):
 	assert len(img.shape) == 3
 	w = img.shape[1]
 	h = img.shape[0]
-	roi= np.zeros_like(img);
-	roi[h//2:h,:,:]= img[h//2:h,:,:]
+	#roi= np.zeros_like(img);
+	#roi[h//2:h,:,:]= img[h//2:h,:,:]
 
-	hls = cv2.cvtColor(roi, cv2.COLOR_RGB2HLS)
+	hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
 	gray = hls[:,:,1] 
 	s_channel = hls[:,:,2]
 	sc_binary = s_select(s_channel,thresh =(170,255))
 	sx_binary = abs_sobel_thresh(gray,'x',20,100)	
 	combined_binary = np.zeros_like(sx_binary)
 	combined_binary[(sc_binary == 1) | (sx_binary == 1)] = 1
-	#cv2.imwrite('bin.png',combined_binary*255)
 	return combined_binary
 
 
@@ -44,6 +43,7 @@ def abs_sobel_thresh(gray, orient='x', thresh_min=0, thresh_max=255):
 	# 5) Create a mask of 1's where the scaled gradient magnitude 
 	        # is > thresh_min and < thresh_max
 	sxbinary = np.zeros_like(scaled_sobel)
+
 	sxbinary[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1 
 	
 	# 6) Return this mask as your binary_output image
@@ -91,8 +91,8 @@ def dir_threshold(gray, sobel_kernel=3, thresh=(0, np.pi/2)):
 
 
 def compute_perspective_transform(w,h):
-	transform_src = np.float32([ [600,465], [340,650], [1160,650], [750,465]])
-	transform_dst = np.float32([ [340,360], [340,700], [1160,700], [1160,360]])
+	transform_src = np.float32([ [615,450], [340,645], [1000,645], [700,450]])
+	transform_dst = np.float32([ [340,400], [340,670], [1000,670], [1000,400]])
 	M = cv2.getPerspectiveTransform(transform_src, transform_dst)
 	invM = cv2.getPerspectiveTransform(transform_dst, transform_src)
 	return [M,invM]
@@ -102,7 +102,7 @@ def apply_perspective_transform(binary_image, M):
 	warped_image = cv2.warpPerspective(binary_image, M, (binary_image.shape[1], binary_image.shape[0]), flags=cv2.INTER_NEAREST)  
 	return warped_image
 
-def identifyLines(binary_warped):
+def identifyLines(binary_warped,previous_l=[],previous_r=[]):
 	global margin,minpix
 	histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
 
@@ -111,8 +111,8 @@ def identifyLines(binary_warped):
 	# Find the peak of the left and right halves of the histogram
 	# These will be the starting point for the left and right lines
 	midpoint = np.int(histogram.shape[0]//2)
-	leftx_base = np.argmax(histogram[:midpoint])
-	rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+	leftx_base = np.argmax(histogram[:midpoint-binary_warped.shape[1]//7])
+	rightx_base = np.argmax(histogram[midpoint + binary_warped.shape[1]//7:]) + midpoint + binary_warped.shape[1]//7
 	
 	# Choose the number of sliding windows
 	nwindows = 9
@@ -136,6 +136,11 @@ def identifyLines(binary_warped):
 		# Identify window boundaries in x and y (and right and left)
 		win_y_low = binary_warped.shape[0] - (window+1)*window_height
 		win_y_high = binary_warped.shape[0] - window*window_height
+		#if previous_l != []:
+		#	leftx_current = int(sum(previous_l[win_y_low:win_y_high])/float(win_y_high-win_y_low))
+		#if previous_r !=[]:
+		#	rightx_current = int(sum(previous_r[win_y_low:win_y_high])/float(win_y_high-win_y_low))
+		#print(leftx_current,rightx_current)
 		win_xleft_low = leftx_current - margin
 		win_xleft_high = leftx_current + margin
 		win_xright_low = rightx_current - margin
@@ -202,7 +207,7 @@ def draw_lane( undist, warped, invM, left_fitx, right_fitx, ploty):
 def compute_curvature( left_fit, right_fit, ploty, left_fitx, right_fitx, leftx, lefty, rightx, righty):
         
     ym_per_pix = 30/720 # meters per pixel in y dimension
-    xm_per_pix = 4/700 # meters per pixel in x dimension
+    xm_per_pix = 4/1280 # meters per pixel in x dimension
     
     y_eval = np.max(ploty)
 
@@ -214,7 +219,7 @@ def compute_curvature( left_fit, right_fit, ploty, left_fitx, right_fitx, leftx,
     return (curve_l+ curve_r) / 2
 def compute_center_offset(curve, undist_image):
         
-    xm_per_pix = 4/700
+    xm_per_pix = 4/1280
     lane_center_x = int(curve)
     image_center_x = int(undist_image.shape[1] / 2)
     offset_from_center = (image_center_x - lane_center_x) * xm_per_pix 
@@ -234,15 +239,19 @@ def render_curvature_and_offset(undist_image, curve, offset):
    return undist_image
 
 if __name__=="__main__":
-	mtx,dist,mapx,mapy = calibrate(False)
+	mtx,dist,mapx,mapy = calibrate(True)
 	img = cv2.imread("../test_images/straight_lines1.jpg")
 	color = cv2.remap(img,mapx,mapy,cv2.INTER_LINEAR)
+	
+	cv2.imwrite('../writeup_img/test1.jpg',color)
 	binary = getBinaryImageframe(color)
+	cv2.imwrite('../writeup_img/binary_combo.jpg',binary*255)
 
 	w = img.shape[1]
 	h = img.shape[0]
 	M,invM = compute_perspective_transform(color.shape[1],color.shape[0])
 	perspective_binary =apply_perspective_transform(binary,M)
+	cv2.imwrite('../writeup_img/warped_straight_lines.jpg',perspective_binary*255)
 	left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty = identifyLines(perspective_binary)
 	
 	out_img = np.dstack((perspective_binary, perspective_binary, perspective_binary))*255
@@ -264,10 +273,10 @@ if __name__=="__main__":
 	cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
 	cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
 	result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
-
+	cv2.imwrite('../writeup_img/color_fit_lines.jpg',result)
 	ret2 = draw_lane(color,perspective_binary,invM,left_fitx,right_fitx,ploty)
-
-	cv2.imshow("binary",result)
+	cv2.imwrite('../writeup_img/example_output.jpg',ret2)
+	cv2.imshow("binary",perspective_binary*255)
 	cv2.imshow("final",ret2)
 	cv2.waitKey()
 	cv2.destroyAllWindows()

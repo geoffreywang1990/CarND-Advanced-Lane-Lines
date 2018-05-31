@@ -43,8 +43,9 @@ def calibrate( ShowResult = False):
 			img = cv2.imread(fname)
 			#dst = cv2.undistort(img, mtx, dist, None, mtx)
 			dst = cv2.remap(img,mapx,mapy,cv2.INTER_LINEAR)
-			cv2.imshow("udist",dst)
-			cv2.waitKey()
+			cv2.imwrite('../writeup_img/undistort_output.jpg',dst)
+			#cv2.imshow("udist",dst)
+			#cv2.waitKey()
 		cv2.destroyAllWindows()
 	return [mtx,dist,mapx,mapy];
 
