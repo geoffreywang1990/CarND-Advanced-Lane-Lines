@@ -20,7 +20,7 @@ def process_img(img,previous_l=[],previous_r = []):
 	perspective_binary = detector.apply_perspective_transform(binary,M)
 	left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty = detector.identifyLines(perspective_binary,previous_l,previous_r)
 
-	if ((right_fitx - left_fitx) < 500).sum() > 100 :
+	if ((right_fitx - left_fitx) < 400).sum() > 100 :
 		left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty = detector.identifyLines(perspective_binary,[],[])
 	ret = detector.draw_lane(undistorted_image,perspective_binary,invM,left_fitx,right_fitx,ploty)
 	

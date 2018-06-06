@@ -43,7 +43,7 @@ You're reading it!
 
 #### 1. Briefly state how you computed the camera matrix and distortion coefficients. Provide an example of a distortion corrected calibration image.
 
-The code for this step is contained in the python script file located in "./solution/calibration.py" (or in lines # through # of the file called `some_file.py`).  
+The code for this step is contained in the python script file located in "./solution/calibration.py"
 
 I start by preparing "object points", which will be the (x, y, z) coordinates of the chessboard corners in the world. Here I am assuming the chessboard is fixed on the (x, y) plane at z=0, such that the object points are the same for each calibration image.  Thus, `objp` is just a replicated array of coordinates, and `objpoints` will be appended with a copy of it every time I successfully detect all chessboard corners in a test image.  `imgpoints` will be appended with the (x, y) pixel position of each of the corners in the image plane with each successful chessboard detection.  
 
@@ -56,12 +56,12 @@ I then used the output `objpoints` and `imgpoints` to compute the camera calibra
 #### 1. Provide an example of a distortion-corrected image.
 
 To demonstrate this step, I will describe how I apply the distortion correction to one of the test images like this one:
-to get such an undistortion image, I will apply the `mapx` and `mapy` calculated from the last step to the test images with `cv2.imread()` function.
+to get such an undistortion image, I will apply the `mapx` and `mapy` calculated from the last step to the test images with `cv2.remap()` function.
 ![alt text][image2]
 
 #### 2. Describe how (and identify where in your code) you used color transforms, gradients or other methods to create a thresholded binary image.  Provide an example of a binary image result.
 
-I used a combination of S channel selection and soble x direction to generate a binary image (thresholding steps at lines #17 through #18 in `findLines.py`).  Here's an example of my output for this step.  (note: this is not actually from one of the test images)
+I used a combination of S channel selection , soble x & y direction and R channel & G channel selection to generate a binary image (thresholding steps at lines #17 through #28 in `findLines.py`).  Here's an example of my output for this step.  (note: this is not actually from one of the test images)
 
 ![alt text][image3]
 
@@ -73,10 +73,10 @@ This resulted in the following source and destination points:
 
 | Source        | Destination   | 
 |:-------------:|:-------------:| 
-| 615, 450      | 340, 400        | 
-| 340, 645      | 340, 670      |
-| 1000, 645     | 1000, 670      |
-| 700, 450      | 1000, 400        |
+| 615, 450      | 400, 100        | 
+| 340, 645      | 400, 700      |
+| 1000, 645     | 880, 700      |
+| 700, 450      | 880, 100        |
 
 I verified that my perspective transform was working as expected by projecting a test image and its warped counterpart to verify that the lines appear parallel in the warped image.
 
