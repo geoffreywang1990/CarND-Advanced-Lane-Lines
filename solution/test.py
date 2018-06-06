@@ -19,20 +19,23 @@ def process_img(img,previous_l=[],previous_r = []):
 	M,invM = detector.compute_perspective_transform(undistorted_image.shape[1],undistorted_image.shape[0])
 	perspective_binary = detector.apply_perspective_transform(binary,M)
 	left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty = detector.identifyLines(perspective_binary,previous_l,previous_r)
+
+	if ((right_fitx - left_fitx) < 500).sum() > 100 :
+		left_fit, right_fit, ploty, left_fitx, right_fitx,  leftx, lefty, rightx, righty = detector.identifyLines(perspective_binary,[],[])
 	ret = detector.draw_lane(undistorted_image,perspective_binary,invM,left_fitx,right_fitx,ploty)
 	
 	
 	curve = detector.compute_curvature(left_fit, right_fit, ploty, left_fitx, right_fitx, leftx, lefty, rightx, righty)
-	offset = detector.compute_center_offset(curve, ret)
+	offset = detector.compute_center_offset(left_fitx,right_fitx, ret)
 	ret = detector.render_curvature_and_offset(ret, curve, offset)
-	return ret,left_fitx,right_fitx
+	return ret,left_fit,right_fit,perspective_binary
 
 def process_test_images():
 	images = glob.glob('../test_images/*.jpg')
 
 	for fname in images:
 		img = cv2.imread(fname)
-		ret,_,_= process_img(img)
+		ret,_,_,_= process_img(img)
 		cv2.imwrite("../output_images/"+fname.split('/')[-1],ret)
 		#cv2.imshow('find lane',ret)
 		#cv2.waitKey()
@@ -49,16 +52,20 @@ def process_video(videoName):
 	previous_r = []
 	while(cap.isOpened()):
 		ret, frame = cap.read()
-		try:
-			result,previous_l,previous_r = process_img(frame,previous_l,previous_r)
-		except:
+		if ret == True:
+			try:
+				result,previous_l,previous_r,perspective_binary = process_img(frame,previous_l,previous_r)
+			except:
+				result,previous_l,previous_r,perspective_binary = process_img(frame,[],[])
+			cv2.imshow('find lane',result)
+			cv2.imshow('binary lane',perspective_binary*255)
+			#print(result.shape,inputshape)
+			#cv2.waitKey()
+			if cv2.waitKey(1) & 0xFF == ord('q'):
+			    break
+			out.write(result)
+		else:
 			break
-		cv2.imshow('find lane',result)
-		#print(result.shape,inputshape)
-		#cv2.waitKey()
-		if cv2.waitKey(1) & 0xFF == ord('q'):
-		    break
-		out.write(result)
 	
 	cap.release()
 	out.release()
