@@ -5,44 +5,63 @@ import glob
 from calibration import calibrate
 margin = 100
 minpix = 50
+invGamma = 1.0/1.5
+gammaTable = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+
 def getBinaryImageframe(img):
+	global gammaTable
 	assert len(img.shape) == 3
 	w = img.shape[1]
 	h = img.shape[0]
 	#roi= np.zeros_like(img);
 	#roi[h//2:h,:,:]= img[h//2:h,:,:]
+	cv2.LUT(img,gammaTable)	
 
 	hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
 	gray = hls[:,:,1] 
 	s_channel = hls[:,:,2]
 	r_channel = img[:,:,0]
 	g_channel = img[:,:,1]
-	sc_binary = s_select(s_channel,thresh =(150,255))
-	r_binary = s_select(r_channel,thresh =(200,255))
-	g_binary = s_select(g_channel,thresh =(200,255))
-	sx_binary = abs_sobel_thresh(gray,'x',30,100)	
+	sc_binary = s_select(s_channel,thresh =(170,250))
+	r_binary = s_select(r_channel,thresh =(50,255))
+	g_binary = s_select(g_channel,thresh =(50,255))
+	sx_binary = abs_sobel_thresh(gray,'x',20,100)	
 	sy_binary = abs_sobel_thresh(gray,'y',30,100)	
-	mag_binary = mag_thresh(gray,3,(70,110))	
+	mag_binary = mag_thresh(gray,3,(50,110))	
 	dir_binary = dir_threshold(gray,15,(0.7,1.3))
 	combined_binary = np.zeros_like(sx_binary)
-	combined_binary[(sc_binary == 1)|  ( (r_binary == 1) & (g_binary == 1)) | ((sx_binary == 1) & (sy_binary == 1))]= 1 #| ((mag_binary == 1) )] = 1
+	#combined_binary[(sc_binary == 1) | (sx_binary == 1) | (mag_binary == 1) ]= 1 #| ((mag_binary == 1) )] = 1
+	#combined_binary[(sc_binary == 1) | (mag_binary ==1) ]= 1
+	combined = sc_binary * + sx_binary *10 + sy_binary * 5 + mag_binary * 10 + dir_binary*10
+	#combined_binary[combined > 20]= 1 #| ((mag_binary == 1) )] = 1
+	combined_binary[ ((sc_binary == 1) & (r_binary ==1) & (g_binary ==1) )| (mag_binary == 1) ]= 1 #] = 1
+	return combined_binary 
+	#return contours_select(combined_binary)
 
-	return combined_binary
-	#return contours_select(combined_binary,2,(20,45),(45,80))
-
-def contours_select(binary,min_w = 3, angle1=(0,30), angle2=(60,90)):
-	ret = np.zeros_like(binary);
+def contours_select(binary):
+	w = binary.shape[1]
+	h = binary.shape[0]
+	ret = np.zeros_like(binary)
+	longLine = 0.4 * h
+	minRegionSize = 0.00001 * w * h
+	smallLaneArea = 5 * minRegionSize
+	ratio =3 
+	leftLinePos = 2 * w //5
+	rightLinePos = 3 * w //5
 	_, contours, hierarchy = cv2.findContours(binary,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
 	for contour in contours:
+		if cv2.contourArea(contour) < minRegionSize:
+			continue
 		rotrect = cv2.minAreaRect(contour)
 		#print(rotrect)
-		w = min(rotrect[1][0],rotrect[1][1])
-		h = max(rotrect[1][0],rotrect[1][1])
-
-		if w > min_w and h/w >2 and ((abs(rotrect[2]) >= angle1[0] and abs(rotrect[2]) <= angle1[1] ) or (abs(rotrect[2]) >= angle2[0] and abs(rotrect[2]) <= angle2[1])):
-			#box = cv2.boxPoints(rotrect)
-			#box = np.int0(box)
-			#print([box])
+		ct_w = rotrect[1][0]
+		ct_h = rotrect[1][1]
+		if ct_w/ct_h<3  and ct_h/ct_w <3:
+			continue
+		ct_angle = abs(rotrect[2])
+		if ((ct_w > longLine) or (ct_h > longLine))  :
+			cv2.fillPoly(ret,[contour],1,0)
+		elif ((ct_angle > 20) and ( ct_angle < 70 )) and ((rotrect[0][0] > leftLinePos) or (rotrect[0][0] <rightLinePos)):
 			cv2.fillPoly(ret,[contour],1,0)
 	return ret
 
@@ -117,7 +136,7 @@ def dir_threshold(gray, sobel_kernel=3, thresh=(0, np.pi/2)):
 
 def compute_perspective_transform(w,h):
 	transform_src = np.float32([ [615,450], [340,645], [1000,645], [700,450]])
-	transform_dst = np.float32([ [400,100], [400,700], [880,700], [880,100]])
+	transform_dst = np.float32([ [300,100], [300,700], [980,700], [980,100]])
 	M = cv2.getPerspectiveTransform(transform_src, transform_dst)
 	invM = cv2.getPerspectiveTransform(transform_dst, transform_src)
 	return [M,invM]
@@ -125,17 +144,23 @@ def compute_perspective_transform(w,h):
 
 def apply_perspective_transform(binary_image, M):
 	warped_image = cv2.warpPerspective(binary_image, M, (binary_image.shape[1], binary_image.shape[0]), flags=cv2.INTER_NEAREST)  
+	#warped_image[:,:300]= 0
+	#warped_image[:,1080:]= 0
+	#warped_image[:,350:930]= 0
+	
+
 	#return contours_select(warped_image)
 	
-	#return contours_select(warped_image,2,(0,40),(50,90))
+	#return contours_select(warped_image,1,(0,30),(60,90))
 	return warped_image
+
 
 def identifyLines(binary_warped,previous_l=[],previous_r=[]):
 	global margin,minpix
 	nonzero = binary_warped.nonzero()
 	nonzeroy = np.array(nonzero[0])
 	nonzerox = np.array(nonzero[1])
-	if(previous_r == [] and previous_l == []): 
+	if previous_r == [] and previous_l == []: 
 		histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
 
 		# Create an output image to draw on and  visualize the result
@@ -244,7 +269,7 @@ def draw_lane( undist, warped, invM, left_fitx, right_fitx, ploty):
 def compute_curvature( left_fit, right_fit, ploty, left_fitx, right_fitx, leftx, lefty, rightx, righty):
         
     ym_per_pix = 20/600 # meters per pixel in y dimension
-    xm_per_pix = 3.7/440 # meters per pixel in x dimension
+    xm_per_pix = 3.7/780 # meters per pixel in x dimension
     
     y_eval = np.max(ploty)
 
@@ -257,7 +282,7 @@ def compute_curvature( left_fit, right_fit, ploty, left_fitx, right_fitx, leftx,
 
 def compute_center_offset(left_fitx,right_fitx, undist_image):
 	    
-	xm_per_pix = 3.7/440
+	xm_per_pix = 3.7/780
 	lane_center_x = int(np.average((left_fitx[180:]+right_fitx[180:])/2))
 	image_center_x = int(undist_image.shape[1] / 2)
 	offset_from_center = (image_center_x - lane_center_x) * xm_per_pix 
